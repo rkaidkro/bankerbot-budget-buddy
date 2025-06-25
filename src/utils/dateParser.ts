@@ -1,3 +1,4 @@
+
 // Advanced date parsing utilities for various CSV formats
 export class DateParser {
   // Common date patterns and their parsing functions
@@ -24,6 +25,11 @@ export class DateParser {
     
     // Excel serial dates (common in exports)
     { regex: /^\d{5}$/, format: 'excel-serial' },
+    
+    // Multi-column date formats (common in banking CSVs)
+    { regex: /^\d{1,2}$/, format: 'day-only' },
+    { regex: /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)$/i, format: 'month-only' },
+    { regex: /^\d{4}$/, format: 'year-only' },
   ];
 
   static parseDate(value: any): Date {
@@ -152,6 +158,9 @@ export class DateParser {
       const str = String(value).trim();
       if (!str) continue;
       
+      // Skip obvious non-date patterns
+      if (str.length > 50 || /^[a-zA-Z\s-]+$/.test(str)) continue;
+      
       // Check if it matches common date patterns
       for (const pattern of this.patterns) {
         if (pattern.regex.test(str)) {
@@ -162,11 +171,48 @@ export class DateParser {
       
       // Also check if it parses as a valid date
       const parsed = new Date(str);
-      if (!isNaN(parsed.getTime()) && parsed.getFullYear() > 1900) {
+      if (!isNaN(parsed.getTime()) && parsed.getFullYear() > 1900 && parsed.getFullYear() < 2100) {
         dateCount++;
       }
     }
     
     return dateCount / sampleSize > 0.7; // 70% of samples should be dates
+  }
+
+  // Handle multi-column date scenarios (e.g., separate day, month, year columns)
+  static parseCombinedDate(dayValue: any, monthValue: any, yearValue?: any): Date {
+    const day = parseInt(String(dayValue || '').trim());
+    const month = this.parseMonth(monthValue);
+    const year = yearValue ? parseInt(String(yearValue).trim()) : new Date().getFullYear();
+    
+    if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+      return new Date(year, month - 1, day);
+    }
+    
+    return new Date();
+  }
+  
+  private static parseMonth(monthValue: any): number {
+    const str = String(monthValue || '').trim().toLowerCase();
+    
+    // Numeric month
+    const num = parseInt(str);
+    if (!isNaN(num) && num >= 1 && num <= 12) {
+      return num;
+    }
+    
+    // Month names
+    const months = [
+      'jan', 'feb', 'mar', 'apr', 'may', 'jun',
+      'jul', 'aug', 'sep', 'oct', 'nov', 'dec'
+    ];
+    
+    for (let i = 0; i < months.length; i++) {
+      if (str.startsWith(months[i])) {
+        return i + 1;
+      }
+    }
+    
+    return NaN;
   }
 }

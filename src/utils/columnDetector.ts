@@ -23,6 +23,8 @@ export class ColumnDetector {
       /^timestamp$/i,
       /^when$/i,
       /^dated$/i,
+      /^posted$/i,
+      /^on$/i,
     ],
     amount: [
       /^amount$/i,
@@ -76,7 +78,77 @@ export class ColumnDetector {
     
     const columnMap: ColumnMapping = {};
     
-    // First pass: exact pattern matching
+    // PRIORITY 1: Data content analysis (most reliable)
+    if (data && data.length > 0) {
+      console.log('Analyzing data content for column detection');
+      
+      // Analyze each column's data content
+      const columnAnalysis = headers.map((header, index) => {
+        const columnValues = data.slice(0, Math.min(10, data.length)).map(row => row[index]).filter(v => v != null);
+        
+        const isDateColumn = DateParser.isLikelyDateColumn(columnValues);
+        const isAmountColumn = this.isLikelyAmountColumn(columnValues);
+        const isDescriptionColumn = this.isLikelyDescriptionColumn(columnValues);
+        
+        console.log(`Column ${index} (${header}) analysis:`, {
+          isDateColumn,
+          isAmountColumn,
+          isDescriptionColumn,
+          sampleValues: columnValues.slice(0, 3)
+        });
+        
+        return {
+          index,
+          header,
+          isDateColumn,
+          isAmountColumn,
+          isDescriptionColumn,
+          confidence: this.calculateConfidence(columnValues, header)
+        };
+      });
+      
+      // Find best date column based on data content
+      const dateColumns = columnAnalysis
+        .filter(col => col.isDateColumn)
+        .sort((a, b) => b.confidence - a.confidence);
+      
+      if (dateColumns.length > 0) {
+        columnMap.date = dateColumns[0].index;
+        console.log(`Selected date column by data analysis`, { 
+          header: dateColumns[0].header, 
+          index: dateColumns[0].index,
+          confidence: dateColumns[0].confidence
+        });
+      }
+      
+      // Find best amount column
+      const amountColumns = columnAnalysis
+        .filter(col => col.isAmountColumn)
+        .sort((a, b) => b.confidence - a.confidence);
+      
+      if (amountColumns.length > 0) {
+        columnMap.amount = amountColumns[0].index;
+        console.log(`Selected amount column by data analysis`, { 
+          header: amountColumns[0].header, 
+          index: amountColumns[0].index 
+        });
+      }
+      
+      // Find best description column
+      const descriptionColumns = columnAnalysis
+        .filter(col => col.isDescriptionColumn && col.index !== columnMap.date && col.index !== columnMap.amount)
+        .sort((a, b) => b.confidence - a.confidence);
+      
+      if (descriptionColumns.length > 0) {
+        columnMap.description = descriptionColumns[0].index;
+        console.log(`Selected description column by data analysis`, { 
+          header: descriptionColumns[0].header, 
+          index: descriptionColumns[0].index 
+        });
+      }
+    }
+    
+    // PRIORITY 2: Header pattern matching (fallback)
     headers.forEach((header, index) => {
       const cleanHeader = header.trim().toLowerCase();
       
@@ -86,45 +158,58 @@ export class ColumnDetector {
         for (const pattern of patterns) {
           if (pattern.test(cleanHeader)) {
             columnMap[field as keyof ColumnMapping] = index;
-            console.log(`Detected ${field} column by pattern`, { header, index, cleanHeader, pattern: pattern.source });
+            console.log(`Detected ${field} column by pattern (fallback)`, { header, index, cleanHeader, pattern: pattern.source });
             break;
           }
         }
       }
     });
 
-    // Second pass: data analysis for missing columns
-    if (data && data.length > 0) {
-      // Analyze date columns if not found
-      if (columnMap.date === undefined) {
-        headers.forEach((header, index) => {
-          const columnValues = data.map(row => row[index]).filter(v => v != null);
-          if (DateParser.isLikelyDateColumn(columnValues)) {
-            columnMap.date = index;
-            console.log(`Detected date column by data analysis`, { header, index });
-          }
-        });
-      }
-
-      // Analyze amount columns if not found
-      if (columnMap.amount === undefined) {
-        headers.forEach((header, index) => {
-          const columnValues = data.map(row => row[index]).filter(v => v != null);
-          if (this.isLikelyAmountColumn(columnValues)) {
-            columnMap.amount = index;
-            console.log(`Detected amount column by data analysis`, { header, index });
-          }
-        });
-      }
-    }
-
-    // Third pass: smart guessing based on position and content
+    // PRIORITY 3: Smart guessing based on position and content
     if (Object.keys(columnMap).length < 2) {
       this.smartGuess(headers, columnMap);
     }
 
     console.log('Column detection completed', { columnMap });
     return columnMap;
+  }
+
+  private static calculateConfidence(values: any[], header: string): number {
+    let confidence = 0;
+    
+    // Base confidence on header name
+    const headerLower = header.toLowerCase();
+    if (headerLower.includes('date') || headerLower.includes('posted') || headerLower.includes('time')) {
+      confidence += 30;
+    }
+    if (headerLower.includes('amount') || headerLower.includes('total') || headerLower.includes('value')) {
+      confidence += 30;
+    }
+    if (headerLower.includes('description') || headerLower.includes('merchant') || headerLower.includes('memo')) {
+      confidence += 30;
+    }
+    
+    // Add confidence based on data content patterns
+    if (values.length > 0) {
+      const sampleSize = Math.min(5, values.length);
+      let patternMatches = 0;
+      
+      for (let i = 0; i < sampleSize; i++) {
+        const val = String(values[i] || '').trim();
+        if (val) {
+          // Date patterns
+          if (DateParser.isLikelyDateColumn([val])) patternMatches += 20;
+          // Amount patterns
+          if (/^[-+]?[\$£€¥₹]?\d+[,.]?\d*[\$£€¥₹]?$/.test(val)) patternMatches += 20;
+          // Description patterns (longer text)
+          if (val.length > 10 && /[a-zA-Z]/.test(val)) patternMatches += 10;
+        }
+      }
+      
+      confidence += Math.min(patternMatches, 50);
+    }
+    
+    return confidence;
   }
 
   private static isLikelyAmountColumn(values: any[]): boolean {
@@ -149,6 +234,30 @@ export class ColumnDetector {
     }
     
     return numericCount / sampleSize > 0.8; // 80% should be numeric
+  }
+
+  private static isLikelyDescriptionColumn(values: any[]): boolean {
+    if (!values || values.length === 0) return false;
+    
+    let textCount = 0;
+    const sampleSize = Math.min(10, values.length);
+    
+    for (let i = 0; i < sampleSize; i++) {
+      const value = values[i];
+      if (value == null) continue;
+      
+      const str = String(value).trim();
+      if (!str) continue;
+      
+      // Check for descriptive text patterns
+      if (str.length > 5 && /[a-zA-Z]/.test(str) && 
+          !DateParser.isLikelyDateColumn([str]) && 
+          !/^[-+]?[\$£€¥₹]?\d+[,.]?\d*[\$£€¥₹]?$/.test(str)) {
+        textCount++;
+      }
+    }
+    
+    return textCount / sampleSize > 0.6; // 60% should be descriptive text
   }
 
   private static smartGuess(headers: string[], columnMap: ColumnMapping) {
