@@ -1,12 +1,11 @@
-
 import React, { useCallback, useState } from 'react';
 import { Upload, File, CheckCircle, AlertCircle } from 'lucide-react';
-import { useBankerBot } from '@/context/BankerBotContext';
+import { useBadBoyBubbysBanking } from '@/context/BankerBotContext';
 import { parseCSV, parseXLS, convertMappingToTransactions } from '@/utils/fileParser';
 import { useToast } from '@/hooks/use-toast';
 
 const FileUpload = () => {
-  const { addTransactions, fileMappings, setFileMappings } = useBankerBot();
+  const { addTransactions, fileMappings, setFileMappings } = useBadBoyBubbysBanking();
   const { toast } = useToast();
   const [dragActive, setDragActive] = useState(false);
   const [processing, setProcessing] = useState(false);

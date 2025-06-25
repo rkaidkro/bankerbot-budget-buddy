@@ -1,7 +1,6 @@
-
 import React, { useMemo, useState } from 'react';
 import { Search, Download, Trash2, Filter } from 'lucide-react';
-import { useBankerBot } from '@/context/BankerBotContext';
+import { useBadBoyBubbysBanking } from '@/context/BankerBotContext';
 import { exportToExcel } from '@/utils/exportUtils';
 import { useToast } from '@/hooks/use-toast';
 
@@ -13,7 +12,7 @@ const TransactionTable = () => {
     setSearchTerm, 
     selectedAccount, 
     setSelectedAccount 
-  } = useBankerBot();
+  } = useBadBoyBubbysBanking();
   const { toast } = useToast();
   const [sortField, setSortField] = useState<keyof typeof transactions[0] | null>('date');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');

@@ -1,6 +1,5 @@
-
 import React, { useState } from 'react';
-import { BankerBotProvider } from '@/context/BankerBotContext';
+import { BadBoyBubbysBankingProvider } from '@/context/BankerBotContext';
 import FileUpload from '@/components/FileUpload';
 import TransactionTable from '@/components/TransactionTable';
 import AccountSummary from '@/components/AccountSummary';
@@ -33,7 +32,7 @@ const Index = () => {
   };
 
   return (
-    <BankerBotProvider>
+    <BadBoyBubbysBankingProvider>
       <div className="min-h-screen bg-gradient-to-br from-green-50 via-blue-50 to-purple-50">
         {/* Header */}
         <header className="bg-white/80 backdrop-blur-sm border-b border-white/20 sticky top-0 z-50">
@@ -45,7 +44,7 @@ const Index = () => {
                 </div>
                 <div>
                   <h1 className="text-2xl font-bold bg-gradient-to-r from-green-600 to-blue-600 bg-clip-text text-transparent">
-                    BankerBot
+                    BadBoyBubby's Banking
                   </h1>
                   <p className="text-sm text-gray-600">Smart Budget Dashboard</p>
                 </div>
@@ -90,7 +89,7 @@ const Index = () => {
             {activeTab === 'upload' && (
               <div className="text-center">
                 <h2 className="text-3xl font-bold text-gray-900 mb-4">
-                  Welcome to BankerBot! 🦄🌈
+                  Welcome to BadBoyBubby's Banking! 🦄🌈
                 </h2>
                 <p className="text-lg text-gray-600 max-w-2xl mx-auto">
                   Your friendly financial companion for merging and analyzing bank transactions. 
@@ -112,7 +111,7 @@ const Index = () => {
             <div className="text-center">
               <div className="flex items-center justify-center space-x-2 mb-4">
                 <Bot className="w-6 h-6 text-green-600" />
-                <span className="text-lg font-semibold text-gray-900">BankerBot v0.1</span>
+                <span className="text-lg font-semibold text-gray-900">BadBoyBubby's Banking v0.1</span>
               </div>
               <p className="text-gray-600 text-sm">
                 Built with 💚 for smart personal finance management
@@ -124,7 +123,7 @@ const Index = () => {
           </div>
         </footer>
       </div>
-    </BankerBotProvider>
+    </BadBoyBubbysBankingProvider>
   );
 };
 

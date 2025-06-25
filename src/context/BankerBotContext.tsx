@@ -1,8 +1,7 @@
-
 import React, { createContext, useContext, useState, ReactNode } from 'react';
 import { Transaction, FileMapping, AccountSummary } from '@/types/transaction';
 
-interface BankerBotContextType {
+interface BadBoyBubbysBankingContextType {
   transactions: Transaction[];
   setTransactions: (transactions: Transaction[]) => void;
   addTransactions: (newTransactions: Transaction[]) => void;
@@ -16,17 +15,17 @@ interface BankerBotContextType {
   setSelectedAccount: (account: string) => void;
 }
 
-const BankerBotContext = createContext<BankerBotContextType | undefined>(undefined);
+const BadBoyBubbysBankingContext = createContext<BadBoyBubbysBankingContextType | undefined>(undefined);
 
-export const useBankerBot = () => {
-  const context = useContext(BankerBotContext);
+export const useBadBoyBubbysBanking = () => {
+  const context = useContext(BadBoyBubbysBankingContext);
   if (!context) {
-    throw new Error('useBankerBot must be used within a BankerBotProvider');
+    throw new Error('useBadBoyBubbysBanking must be used within a BadBoyBubbysBankingProvider');
   }
   return context;
 };
 
-export const BankerBotProvider = ({ children }: { children: ReactNode }) => {
+export const BadBoyBubbysBankingProvider = ({ children }: { children: ReactNode }) => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [fileMappings, setFileMappings] = useState<FileMapping[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -69,7 +68,7 @@ export const BankerBotProvider = ({ children }: { children: ReactNode }) => {
   };
 
   return (
-    <BankerBotContext.Provider value={{
+    <BadBoyBubbysBankingContext.Provider value={{
       transactions,
       setTransactions,
       addTransactions,
@@ -83,6 +82,6 @@ export const BankerBotProvider = ({ children }: { children: ReactNode }) => {
       setSelectedAccount,
     }}>
       {children}
-    </BankerBotContext.Provider>
+    </BadBoyBubbysBankingContext.Provider>
   );
 };

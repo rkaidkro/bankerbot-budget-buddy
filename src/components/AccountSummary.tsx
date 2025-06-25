@@ -1,10 +1,9 @@
-
 import React from 'react';
 import { TrendingUp, TrendingDown, DollarSign, CreditCard } from 'lucide-react';
-import { useBankerBot } from '@/context/BankerBotContext';
+import { useBadBoyBubbysBanking } from '@/context/BankerBotContext';
 
 const AccountSummary = () => {
-  const { getAccountSummaries, transactions } = useBankerBot();
+  const { getAccountSummaries, transactions } = useBadBoyBubbysBanking();
   const summaries = getAccountSummaries();
 
   const formatCurrency = (amount: number) => {

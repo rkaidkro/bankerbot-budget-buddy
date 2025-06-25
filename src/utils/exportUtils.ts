@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 import { Transaction } from '@/types/transaction';
 
-export const exportToExcel = (transactions: Transaction[], filename: string = 'bankerbot-export.xlsx') => {
+export const exportToExcel = (transactions: Transaction[], filename: string = 'badboybubby-banking-export.xlsx') => {
   const exportData = transactions.map(t => ({
     Date: t.date.toLocaleDateString(),
     Amount: t.amount,

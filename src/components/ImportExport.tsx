@@ -1,12 +1,11 @@
-
 import React, { useRef } from 'react';
 import { Download, Upload } from 'lucide-react';
-import { useBankerBot } from '@/context/BankerBotContext';
+import { useBadBoyBubbysBanking } from '@/context/BankerBotContext';
 import { exportToExcel, importFromExcel } from '@/utils/exportUtils';
 import { useToast } from '@/hooks/use-toast';
 
 const ImportExport = () => {
-  const { transactions, setTransactions } = useBankerBot();
+  const { transactions, setTransactions } = useBadBoyBubbysBanking();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -20,7 +19,7 @@ const ImportExport = () => {
       return;
     }
 
-    const filename = `bankerbot-session-${new Date().toISOString().split('T')[0]}.xlsx`;
+    const filename = `badboybubby-banking-session-${new Date().toISOString().split('T')[0]}.xlsx`;
     exportToExcel(transactions, filename);
     
     toast({
@@ -45,7 +44,7 @@ const ImportExport = () => {
       console.error('Import error:', error);
       toast({
         title: "Import failed",
-        description: "Please make sure you're importing a valid BankerBot export file",
+        description: "Please make sure you're importing a valid BadBoyBubby's Banking export file",
         variant: "destructive"
       });
     }
