@@ -20,7 +20,7 @@ It’s fintech, but if your accountant was a feral cat with TailwindCSS.
 
 ## 🧠 Why Though?
 
-This was born from a mate yelling "Copilot’s cooked it again" and Luna going full goblin-mode on lovable.dev until a dashboard appeared.
+This was born from a mate yelling "Copilot’s cooked it again" and Dutchie going full goblin-mode.
 
 No logins. No cloud. No SaaS fees. Just you, your trauma-spending, and some nicely rounded UI boxes.
 
