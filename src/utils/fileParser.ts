@@ -3,46 +3,14 @@ import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { Transaction } from '@/types/transaction';
 import { logger } from '@/components/LoggingPanel';
+import { DateParser } from './dateParser';
+import { ColumnDetector } from './columnDetector';
 
 interface ParseResult {
   transactions: Transaction[];
   fileName: string;
   detectedColumns: string[];
 }
-
-const detectColumns = (headers: string[]): { [key: string]: number } => {
-  logger.info('Detecting columns from headers', { headers });
-  
-  const columnMap: { [key: string]: number } = {};
-  
-  // Common patterns for different fields
-  const patterns = {
-    date: /date|time|transaction.*date|posting.*date|effective.*date/i,
-    amount: /amount|value|sum|total|credit|debit|transaction.*amount/i,
-    description: /description|memo|details|transaction.*details|reference|particulars|narrative/i,
-    account: /account|acc.*no|account.*number|account.*name/i
-  };
-
-  headers.forEach((header, index) => {
-    const cleanHeader = header.trim().toLowerCase();
-    
-    for (const [field, pattern] of Object.entries(patterns)) {
-      if (pattern.test(cleanHeader) && !columnMap[field]) {
-        columnMap[field] = index;
-        logger.info(`Detected ${field} column`, { header, index, cleanHeader });
-        break;
-      }
-    }
-  });
-
-  // If amount column not found, look for numeric columns
-  if (columnMap.amount === undefined) {
-    logger.warning('Amount column not found by pattern, will try to detect from data');
-  }
-
-  logger.info('Column mapping completed', { columnMap });
-  return columnMap;
-};
 
 const parseAmount = (value: any): number => {
   if (typeof value === 'number') return value;
@@ -63,41 +31,12 @@ const parseAmount = (value: any): number => {
   return isNaN(num) ? 0 : num;
 };
 
-const parseDate = (value: any): Date => {
-  if (!value) return new Date();
-  
-  // Try different date formats
-  const dateStr = String(value).trim();
-  
-  // Try parsing as-is first
-  let date = new Date(dateStr);
-  if (!isNaN(date.getTime())) return date;
-  
-  // Try common formats
-  const formats = [
-    /(\d{1,2})\/(\d{1,2})\/(\d{4})/,  // MM/DD/YYYY or DD/MM/YYYY
-    /(\d{4})-(\d{1,2})-(\d{1,2})/,   // YYYY-MM-DD
-    /(\d{1,2})-(\d{1,2})-(\d{4})/,   // MM-DD-YYYY or DD-MM-YYYY
-  ];
-  
-  for (const format of formats) {
-    const match = dateStr.match(format);
-    if (match) {
-      date = new Date(dateStr);
-      if (!isNaN(date.getTime())) return date;
-    }
-  }
-  
-  logger.warning('Could not parse date, using current date', { originalValue: value, dateStr });
-  return new Date();
-};
-
 export const parseCSV = (file: File): Promise<ParseResult> => {
   return new Promise((resolve, reject) => {
     logger.info('Starting CSV parse', { fileName: file.name, fileSize: file.size });
     
     Papa.parse(file, {
-      header: true,
+      header: false, // Parse as arrays to get better control
       skipEmptyLines: true,
       complete: (results) => {
         try {
@@ -111,14 +50,23 @@ export const parseCSV = (file: File): Promise<ParseResult> => {
             logger.warning('CSV parsing errors detected', { errors: results.errors });
           }
 
-          const headers = results.meta.fields || [];
+          const rows = results.data as string[][];
+          if (rows.length === 0) {
+            throw new Error('No data found in CSV file');
+          }
+
+          // First row should be headers
+          const headers = rows[0];
+          const dataRows = rows.slice(1);
+          
           logger.info('CSV headers detected', { headers });
           
           if (headers.length === 0) {
             throw new Error('No headers found in CSV file');
           }
 
-          const columnMap = detectColumns(headers);
+          // Enhanced column detection with data analysis
+          const columnMap = ColumnDetector.detectColumns(headers, dataRows.slice(0, 10));
           
           // Check if we found required columns
           if (columnMap.date === undefined && columnMap.amount === undefined) {
@@ -129,19 +77,35 @@ export const parseCSV = (file: File): Promise<ParseResult> => {
           const transactions: Transaction[] = [];
           const failedRows: any[] = [];
 
-          (results.data as any[]).forEach((row, index) => {
+          dataRows.forEach((row, index) => {
             try {
               // Skip empty rows
-              if (!row || Object.values(row).every(val => !val || String(val).trim() === '')) {
+              if (!row || row.every(val => !val || String(val).trim() === '')) {
                 return;
+              }
+
+              // Parse date with enhanced logic
+              let transactionDate = new Date();
+              if (columnMap.date !== undefined) {
+                const dateValue = row[columnMap.date];
+                transactionDate = DateParser.parseDate(dateValue);
+                
+                // Log parsing issues for debugging
+                if (String(dateValue).trim() && transactionDate.getTime() === new Date().getTime()) {
+                  logger.warning('Date parsing fallback used', { 
+                    originalValue: dateValue, 
+                    rowIndex: index + 1,
+                    columnIndex: columnMap.date 
+                  });
+                }
               }
 
               const transaction: Transaction = {
                 id: Math.random().toString(36).substr(2, 9),
-                date: columnMap.date !== undefined ? parseDate(row[headers[columnMap.date]]) : new Date(),
-                amount: columnMap.amount !== undefined ? parseAmount(row[headers[columnMap.amount]]) : 0,
-                description: columnMap.description !== undefined ? String(row[headers[columnMap.description]] || '') : `Transaction ${index + 1}`,
-                account: columnMap.account !== undefined ? String(row[headers[columnMap.account]] || '') : file.name.replace(/\.[^/.]+$/, ''),
+                date: transactionDate,
+                amount: columnMap.amount !== undefined ? parseAmount(row[columnMap.amount]) : 0,
+                description: columnMap.description !== undefined ? String(row[columnMap.description] || '') : `Transaction ${index + 1}`,
+                account: columnMap.account !== undefined ? String(row[columnMap.account] || '') : file.name.replace(/\.[^/.]+$/, ''),
                 sourceFile: file.name,
               };
 
@@ -159,7 +123,8 @@ export const parseCSV = (file: File): Promise<ParseResult> => {
           logger.success(`Successfully parsed ${transactions.length} transactions from CSV`, {
             fileName: file.name,
             transactionCount: transactions.length,
-            failedRowCount: failedRows.length
+            failedRowCount: failedRows.length,
+            columnMapping: columnMap
           });
 
           resolve({
@@ -206,7 +171,7 @@ export const parseXLS = (file: File): Promise<ParseResult> => {
         }
         
         const headers = (jsonData[0] as string[]) || [];
-        const dataRows = jsonData.slice(1);
+        const dataRows = jsonData.slice(1) as any[][];
         
         logger.info('XLS data extracted', { 
           headers, 
@@ -214,7 +179,8 @@ export const parseXLS = (file: File): Promise<ParseResult> => {
           sheetName: firstSheetName 
         });
         
-        const columnMap = detectColumns(headers);
+        // Enhanced column detection
+        const columnMap = ColumnDetector.detectColumns(headers, dataRows.slice(0, 10));
         
         if (columnMap.date === undefined && columnMap.amount === undefined) {
           logger.error('No date or amount columns detected in XLS');
@@ -230,9 +196,24 @@ export const parseXLS = (file: File): Promise<ParseResult> => {
               return;
             }
 
+            // Enhanced date parsing
+            let transactionDate = new Date();
+            if (columnMap.date !== undefined) {
+              const dateValue = row[columnMap.date];
+              transactionDate = DateParser.parseDate(dateValue);
+              
+              if (String(dateValue).trim() && transactionDate.getTime() === new Date().getTime()) {
+                logger.warning('XLS Date parsing fallback used', { 
+                  originalValue: dateValue, 
+                  rowIndex: index + 1,
+                  columnIndex: columnMap.date 
+                });
+              }
+            }
+
             const transaction: Transaction = {
               id: Math.random().toString(36).substr(2, 9),
-              date: columnMap.date !== undefined ? parseDate(row[columnMap.date]) : new Date(),
+              date: transactionDate,
               amount: columnMap.amount !== undefined ? parseAmount(row[columnMap.amount]) : 0,
               description: columnMap.description !== undefined ? String(row[columnMap.description] || '') : `Transaction ${index + 1}`,
               account: columnMap.account !== undefined ? String(row[columnMap.account] || '') : file.name.replace(/\.[^/.]+$/, ''),
@@ -253,7 +234,8 @@ export const parseXLS = (file: File): Promise<ParseResult> => {
         logger.success(`Successfully parsed ${transactions.length} transactions from XLS`, {
           fileName: file.name,
           transactionCount: transactions.length,
-          failedRowCount: failedRows.length
+          failedRowCount: failedRows.length,
+          columnMapping: columnMap
         });
 
         resolve({
