@@ -1,173 +1,314 @@
 
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
-import { Transaction, FileMapping } from '@/types/transaction';
+import { Transaction } from '@/types/transaction';
+import { logger } from '@/components/LoggingPanel';
 
-const generateId = () => Math.random().toString(36).substr(2, 9);
+interface ParseResult {
+  transactions: Transaction[];
+  fileName: string;
+  detectedColumns: string[];
+}
 
-const detectDateColumn = (headers: string[]): number => {
-  const dateKeywords = ['date', 'transaction date', 'posting date', 'value date', 'created'];
-  return headers.findIndex(header => 
-    dateKeywords.some(keyword => 
-      header.toLowerCase().includes(keyword.toLowerCase())
-    )
-  );
+const detectColumns = (headers: string[]): { [key: string]: number } => {
+  logger.info('Detecting columns from headers', { headers });
+  
+  const columnMap: { [key: string]: number } = {};
+  
+  // Common patterns for different fields
+  const patterns = {
+    date: /date|time|transaction.*date|posting.*date|effective.*date/i,
+    amount: /amount|value|sum|total|credit|debit|transaction.*amount/i,
+    description: /description|memo|details|transaction.*details|reference|particulars|narrative/i,
+    account: /account|acc.*no|account.*number|account.*name/i
+  };
+
+  headers.forEach((header, index) => {
+    const cleanHeader = header.trim().toLowerCase();
+    
+    for (const [field, pattern] of Object.entries(patterns)) {
+      if (pattern.test(cleanHeader) && !columnMap[field]) {
+        columnMap[field] = index;
+        logger.info(`Detected ${field} column`, { header, index, cleanHeader });
+        break;
+      }
+    }
+  });
+
+  // If amount column not found, look for numeric columns
+  if (columnMap.amount === undefined) {
+    logger.warning('Amount column not found by pattern, will try to detect from data');
+  }
+
+  logger.info('Column mapping completed', { columnMap });
+  return columnMap;
 };
 
-const detectAmountColumn = (headers: string[]): number => {
-  const amountKeywords = ['amount', 'value', 'transaction amount', 'debit', 'credit', 'balance'];
-  return headers.findIndex(header => 
-    amountKeywords.some(keyword => 
-      header.toLowerCase().includes(keyword.toLowerCase())
-    )
-  );
+const parseAmount = (value: any): number => {
+  if (typeof value === 'number') return value;
+  
+  const str = String(value || '').trim();
+  if (!str) return 0;
+  
+  // Remove currency symbols and commas
+  const cleaned = str.replace(/[$£€¥₹,\s]/g, '');
+  
+  // Handle parentheses as negative (accounting format)
+  if (cleaned.startsWith('(') && cleaned.endsWith(')')) {
+    const num = parseFloat(cleaned.slice(1, -1));
+    return isNaN(num) ? 0 : -num;
+  }
+  
+  const num = parseFloat(cleaned);
+  return isNaN(num) ? 0 : num;
 };
 
-const detectDescriptionColumn = (headers: string[]): number => {
-  const descKeywords = ['description', 'details', 'memo', 'reference', 'transaction details', 'payee'];
-  return headers.findIndex(header => 
-    descKeywords.some(keyword => 
-      header.toLowerCase().includes(keyword.toLowerCase())
-    )
-  );
-};
-
-const detectAccountColumn = (headers: string[]): number => {
-  const accountKeywords = ['account', 'card', 'account number', 'source'];
-  return headers.findIndex(header => 
-    accountKeywords.some(keyword => 
-      header.toLowerCase().includes(keyword.toLowerCase())
-    )
-  );
-};
-
-const parseDate = (dateStr: string): Date => {
-  // Try multiple date formats
+const parseDate = (value: any): Date => {
+  if (!value) return new Date();
+  
+  // Try different date formats
+  const dateStr = String(value).trim();
+  
+  // Try parsing as-is first
+  let date = new Date(dateStr);
+  if (!isNaN(date.getTime())) return date;
+  
+  // Try common formats
   const formats = [
-    /(\d{1,2})\/(\d{1,2})\/(\d{4})/,  // MM/DD/YYYY
+    /(\d{1,2})\/(\d{1,2})\/(\d{4})/,  // MM/DD/YYYY or DD/MM/YYYY
     /(\d{4})-(\d{1,2})-(\d{1,2})/,   // YYYY-MM-DD
-    /(\d{1,2})-(\d{1,2})-(\d{4})/,   // DD-MM-YYYY
+    /(\d{1,2})-(\d{1,2})-(\d{4})/,   // MM-DD-YYYY or DD-MM-YYYY
   ];
   
   for (const format of formats) {
     const match = dateStr.match(format);
     if (match) {
-      const [, p1, p2, p3] = match;
-      // Try different interpretations
-      const date1 = new Date(parseInt(p3), parseInt(p1) - 1, parseInt(p2));
-      const date2 = new Date(parseInt(p1), parseInt(p2) - 1, parseInt(p3));
-      
-      if (!isNaN(date1.getTime())) return date1;
-      if (!isNaN(date2.getTime())) return date2;
+      date = new Date(dateStr);
+      if (!isNaN(date.getTime())) return date;
     }
   }
   
-  // Fallback to native Date parsing
-  const parsed = new Date(dateStr);
-  return isNaN(parsed.getTime()) ? new Date() : parsed;
+  logger.warning('Could not parse date, using current date', { originalValue: value, dateStr });
+  return new Date();
 };
 
-const parseAmount = (amountStr: string): number => {
-  // Remove currency symbols and spaces, handle parentheses for negative
-  const cleaned = amountStr.toString()
-    .replace(/[$€£¥,\s]/g, '')
-    .replace(/[()]/g, '');
-  
-  const isNegative = amountStr.includes('(') || amountStr.includes('-');
-  const amount = parseFloat(cleaned) || 0;
-  
-  return isNegative ? -Math.abs(amount) : amount;
-};
-
-export const parseCSV = (file: File): Promise<FileMapping> => {
+export const parseCSV = (file: File): Promise<ParseResult> => {
   return new Promise((resolve, reject) => {
+    logger.info('Starting CSV parse', { fileName: file.name, fileSize: file.size });
+    
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
       complete: (results) => {
-        const headers = results.meta.fields || [];
-        const data = results.data;
-        
-        const mapping: FileMapping = {
-          fileName: file.name,
-          headers,
-          dateColumn: detectDateColumn(headers),
-          amountColumn: detectAmountColumn(headers),
-          descriptionColumn: detectDescriptionColumn(headers),
-          accountColumn: detectAccountColumn(headers),
-          previewData: data.slice(0, 5)
-        };
-        
-        resolve(mapping);
+        try {
+          logger.info('CSV parsing completed', { 
+            rowCount: results.data.length, 
+            errors: results.errors.length,
+            meta: results.meta 
+          });
+
+          if (results.errors.length > 0) {
+            logger.warning('CSV parsing errors detected', { errors: results.errors });
+          }
+
+          const headers = results.meta.fields || [];
+          logger.info('CSV headers detected', { headers });
+          
+          if (headers.length === 0) {
+            throw new Error('No headers found in CSV file');
+          }
+
+          const columnMap = detectColumns(headers);
+          
+          // Check if we found required columns
+          if (columnMap.date === undefined && columnMap.amount === undefined) {
+            logger.error('No date or amount columns detected');
+            throw new Error('Could not detect date or amount columns. Please check your CSV format.');
+          }
+
+          const transactions: Transaction[] = [];
+          const failedRows: any[] = [];
+
+          (results.data as any[]).forEach((row, index) => {
+            try {
+              // Skip empty rows
+              if (!row || Object.values(row).every(val => !val || String(val).trim() === '')) {
+                return;
+              }
+
+              const transaction: Transaction = {
+                id: Math.random().toString(36).substr(2, 9),
+                date: columnMap.date !== undefined ? parseDate(row[headers[columnMap.date]]) : new Date(),
+                amount: columnMap.amount !== undefined ? parseAmount(row[headers[columnMap.amount]]) : 0,
+                description: columnMap.description !== undefined ? String(row[headers[columnMap.description]] || '') : `Transaction ${index + 1}`,
+                account: columnMap.account !== undefined ? String(row[headers[columnMap.account]] || '') : file.name.replace(/\.[^/.]+$/, ''),
+                sourceFile: file.name,
+              };
+
+              transactions.push(transaction);
+            } catch (error) {
+              logger.warning(`Failed to parse row ${index + 1}`, { row, error: error.message });
+              failedRows.push({ rowIndex: index + 1, row, error: error.message });
+            }
+          });
+
+          if (failedRows.length > 0) {
+            logger.warning(`Failed to parse ${failedRows.length} rows`, { failedRows: failedRows.slice(0, 5) });
+          }
+
+          logger.success(`Successfully parsed ${transactions.length} transactions from CSV`, {
+            fileName: file.name,
+            transactionCount: transactions.length,
+            failedRowCount: failedRows.length
+          });
+
+          resolve({
+            transactions,
+            fileName: file.name,
+            detectedColumns: headers
+          });
+        } catch (error) {
+          logger.error('Error processing CSV data', { error: error.message, fileName: file.name });
+          reject(error);
+        }
       },
-      error: (error) => reject(error)
+      error: (error) => {
+        logger.error('CSV parsing failed', { error: error.message, fileName: file.name });
+        reject(new Error(`Failed to parse CSV: ${error.message}`));
+      }
     });
   });
 };
 
-export const parseXLS = (file: File): Promise<FileMapping> => {
+export const parseXLS = (file: File): Promise<ParseResult> => {
   return new Promise((resolve, reject) => {
+    logger.info('Starting XLS/XLSX parse', { fileName: file.name, fileSize: file.size });
+    
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
         const data = new Uint8Array(e.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: 'array' });
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
+        
+        logger.info('Workbook loaded', { sheetNames: workbook.SheetNames });
+        
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        
+        if (!worksheet) {
+          throw new Error('No worksheet found in file');
+        }
+        
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
         
         if (jsonData.length === 0) {
-          reject(new Error('Empty spreadsheet'));
-          return;
+          throw new Error('No data found in worksheet');
         }
         
-        const headers = jsonData[0] as string[];
-        const dataRows = jsonData.slice(1).map(row => {
-          const obj: any = {};
-          headers.forEach((header, index) => {
-            obj[header] = (row as any[])[index] || '';
-          });
-          return obj;
+        const headers = (jsonData[0] as string[]) || [];
+        const dataRows = jsonData.slice(1);
+        
+        logger.info('XLS data extracted', { 
+          headers, 
+          rowCount: dataRows.length,
+          sheetName: firstSheetName 
         });
         
-        const mapping: FileMapping = {
-          fileName: file.name,
-          headers,
-          dateColumn: detectDateColumn(headers),
-          amountColumn: detectAmountColumn(headers),
-          descriptionColumn: detectDescriptionColumn(headers),
-          accountColumn: detectAccountColumn(headers),
-          previewData: dataRows.slice(0, 5)
-        };
+        const columnMap = detectColumns(headers);
         
-        resolve(mapping);
+        if (columnMap.date === undefined && columnMap.amount === undefined) {
+          logger.error('No date or amount columns detected in XLS');
+          throw new Error('Could not detect date or amount columns. Please check your Excel format.');
+        }
+
+        const transactions: Transaction[] = [];
+        const failedRows: any[] = [];
+
+        dataRows.forEach((row: any[], index) => {
+          try {
+            if (!row || row.every(val => !val || String(val).trim() === '')) {
+              return;
+            }
+
+            const transaction: Transaction = {
+              id: Math.random().toString(36).substr(2, 9),
+              date: columnMap.date !== undefined ? parseDate(row[columnMap.date]) : new Date(),
+              amount: columnMap.amount !== undefined ? parseAmount(row[columnMap.amount]) : 0,
+              description: columnMap.description !== undefined ? String(row[columnMap.description] || '') : `Transaction ${index + 1}`,
+              account: columnMap.account !== undefined ? String(row[columnMap.account] || '') : file.name.replace(/\.[^/.]+$/, ''),
+              sourceFile: file.name,
+            };
+
+            transactions.push(transaction);
+          } catch (error) {
+            logger.warning(`Failed to parse XLS row ${index + 1}`, { row, error: error.message });
+            failedRows.push({ rowIndex: index + 1, row, error: error.message });
+          }
+        });
+
+        if (failedRows.length > 0) {
+          logger.warning(`Failed to parse ${failedRows.length} XLS rows`, { failedRows: failedRows.slice(0, 5) });
+        }
+
+        logger.success(`Successfully parsed ${transactions.length} transactions from XLS`, {
+          fileName: file.name,
+          transactionCount: transactions.length,
+          failedRowCount: failedRows.length
+        });
+
+        resolve({
+          transactions,
+          fileName: file.name,
+          detectedColumns: headers
+        });
       } catch (error) {
+        logger.error('Error processing XLS data', { error: error.message, fileName: file.name });
         reject(error);
       }
     };
+    
+    reader.onerror = () => {
+      const error = 'Failed to read file';
+      logger.error(error, { fileName: file.name });
+      reject(new Error(error));
+    };
+    
     reader.readAsArrayBuffer(file);
   });
 };
 
-export const convertMappingToTransactions = (
-  mapping: FileMapping,
-  rawData: any[]
-): Transaction[] => {
-  const accountName = mapping.fileName.replace(/\.(csv|xls|xlsx)$/i, '');
+export const parseFile = async (file: File): Promise<ParseResult> => {
+  logger.info('Starting file parse', { fileName: file.name, fileType: file.type, fileSize: file.size });
   
-  return rawData.map((row, index) => {
-    const dateValue = mapping.dateColumn !== undefined ? row[mapping.headers[mapping.dateColumn]] : '';
-    const amountValue = mapping.amountColumn !== undefined ? row[mapping.headers[mapping.amountColumn]] : '0';
-    const descValue = mapping.descriptionColumn !== undefined ? row[mapping.headers[mapping.descriptionColumn]] : '';
-    const accountValue = mapping.accountColumn !== undefined ? row[mapping.headers[mapping.accountColumn]] : accountName;
+  const extension = file.name.toLowerCase().split('.').pop();
+  
+  try {
+    let result: ParseResult;
     
-    return {
-      id: generateId(),
-      date: parseDate(dateValue),
-      amount: parseAmount(amountValue),
-      description: descValue || 'Unknown Transaction',
-      account: accountValue || accountName,
-      sourceFile: mapping.fileName
-    };
-  }).filter(t => t.date && !isNaN(t.amount));
+    if (extension === 'csv' || file.type === 'text/csv') {
+      result = await parseCSV(file);
+    } else if (extension === 'xlsx' || extension === 'xls' || file.type.includes('spreadsheet')) {
+      result = await parseXLS(file);
+    } else {
+      const error = `Unsupported file type: ${extension}. Please upload CSV or Excel files.`;
+      logger.error(error, { fileName: file.name, extension, fileType: file.type });
+      throw new Error(error);
+    }
+    
+    logger.success('File parsing completed successfully', {
+      fileName: file.name,
+      transactionCount: result.transactions.length,
+      detectedColumns: result.detectedColumns
+    });
+    
+    return result;
+  } catch (error) {
+    logger.error('File parsing failed', { 
+      fileName: file.name, 
+      error: error.message,
+      extension,
+      fileType: file.type 
+    });
+    throw error;
+  }
 };
