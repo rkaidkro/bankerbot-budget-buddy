@@ -54,11 +54,13 @@ const FileUpload = () => {
         // Add transactions to context
         addTransactions(result.transactions);
 
-        // Update file mappings
+        // Update file mappings with proper FileMapping structure
         const newMapping = {
           fileName: file.name,
           detectedColumns: result.detectedColumns,
-          transactionCount: result.transactions.length
+          transactionCount: result.transactions.length,
+          headers: result.detectedColumns,
+          previewData: []
         };
         setFileMappings([...fileMappings, newMapping]);
 

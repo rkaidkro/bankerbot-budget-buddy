@@ -11,12 +11,14 @@ export interface Transaction {
 
 export interface FileMapping {
   fileName: string;
-  headers: string[];
+  headers?: string[];
   dateColumn?: number;
   amountColumn?: number;
   descriptionColumn?: number;
   accountColumn?: number;
-  previewData: any[];
+  previewData?: any[];
+  detectedColumns: string[];
+  transactionCount: number;
 }
 
 export interface AccountSummary {
